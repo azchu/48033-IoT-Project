@@ -29,18 +29,17 @@ ESP8266WiFiMulti wifiMulti;
 #define PWM_BIT 11
 #define FRQ 1000
 
-#define ADC_LIGHT_MIN 990 //adc reading for the photocell
-#define ADC_LIGHT_MAX 1600
-
+#define ADC_LIGHT_MIN 1171 //adc reading for the photocell // when the ambient light is maximum
+#define ADC_LIGHT_MAX 1832 //when ambient light is minimum (dark room)
 
 // WiFi AP SSID
-#define WIFI_SSID ""
+#define WIFI_SSID "earthnet-gg"
 // WiFi password
-#define WIFI_PASSWORD ""
+#define WIFI_PASSWORD "niyumi08"
 
 #define INFLUXDB_URL "https://us-east-1-1.aws.cloud2.influxdata.com"
-#define INFLUXDB_TOKEN ""
-#define INFLUXDB_ORG ""
+#define INFLUXDB_TOKEN "UcQ5M0StjbbfJsFdA84k39_rdL76dj25y-cQsyJ5AFljFKuSgNWcID9MUYLxVHgR9xftGWd6ZBjfomyBr5A3lA=="
+#define INFLUXDB_ORG "3bd794dacd2ad103"
 #define INFLUXDB_BUCKET "ESP32"
 
 // Time zone info
@@ -176,11 +175,11 @@ void loop() {
   }
   
   //turn on LEDS based on the temperature level
-  const char *warningTopic = "greenhouse_esp32/warnings";
+  const char *statusTopic = "greenhouse_esp32/temperatureStatus";
   if (temp_reading < tempLowerThreshold) { 
     //turn on the blue LED if current temp < then the lower threshold
-    const char *lowerPayload = "Warning! The temperature is less than the set threshold";
-    if (mqttClient.publish(warningTopic, lowerPayload)) {
+    const char *lowerPayload = "Warning! The temperature is less than the set threshold!";
+    if (mqttClient.publish(statusTopic, lowerPayload)) {
       Serial.println("lower warning publish okay");
     } else {
       Serial.println("lower warning publish failed");
@@ -192,8 +191,8 @@ void loop() {
     
   } else if (temp_reading > tempUpperThreshold) {
     //turn on the red LED if current temp is higher then the lower threshold
-    const char *higherPayload = "Warning! The temperature exceeds the set threshold";
-    if (mqttClient.publish(warningTopic, higherPayload)) {
+    const char *higherPayload = "Warning! The temperature exceeds the set threshold!";
+    if (mqttClient.publish(statusTopic, higherPayload)) {
       Serial.println("higher warning publish okay");
     } else {
       Serial.println("higher warning publish failed");
@@ -206,9 +205,9 @@ void loop() {
     
     //we want the green LED to blink within two celsius of the temp threshold
   } else if ((temp_reading - tempLowerThreshold) <= 1.0 || (tempUpperThreshold - temp_reading) <= 1.0) {
-    //char* thresholdType = ((temp_reading - tempLowerThreshold) <= 2.0) ? "minimum threshold" : "maximum threshold";
-    const char *warningPayload = "Warning! The temperature is approaching the set threshold ";
-    if (mqttClient.publish(warningTopic, warningPayload)) {
+    String thresholdType = ((temp_reading - tempLowerThreshold) <= 2.0) ? "minimum threshold!" : "maximum threshold!";
+    String warningPayload = "Warning! The temperature is approaching the set " + thresholdType;
+    if (mqttClient.publish(statusTopic, warningPayload.c_str())) {
       Serial.println("warning publish okay");
     } else {
       Serial.println("warning publish failed");
@@ -225,6 +224,13 @@ void loop() {
       green_blinking_flag=1;
     }
   } else {
+    const char *greenPayload = "The temperature is within the set threshold.";
+    if (mqttClient.publish(statusTopic, greenPayload)) {
+      Serial.println("good temperature publish okay");
+    } else {
+      Serial.println("good temperature publish failed");
+    }
+    
     //turn on the green led, if the temperature is within the threshold
     digitalWrite(LED_GREEN, HIGH);
     green_blinking_flag = 1;
@@ -238,25 +244,29 @@ void loop() {
     light_reading = ADC_LIGHT_MAX;
   }
   
+  int targetValue = 0;
   // Uses the light reading from the photo_cell to control the brightness of the yellow LED
-  int adc_value = map(light_reading, ADC_LIGHT_MIN, ADC_LIGHT_MAX, 0, (pow(2, PWM_BIT) -1));
+  
   //25% light level
+  int ambient_light_range = ADC_LIGHT_MAX - ADC_LIGHT_MIN;
   if (lightLevel == 1) {
-    // user input: 1, 2, 3 
-    // low temperature, high temperature
-    // 3 light modes which indicate the light target
-    // If the light level is 1 (the user want low ambient), we want the photocell's threshold to be a low value
-    // If Light level 3 (high), the user wants a lot of light, if the threshold is not met, turn up brightness of yellow LED
-    // Sets the threshold for the 
-  // 100% light level
+    targetValue =  ADC_LIGHT_MAX - (ambient_light_range/4);
+  } else if (lightLevel == 2) {
+    targetValue =  ADC_LIGHT_MAX - (2*(ambient_light_range/4));
+  // 75% light level
   } else if (lightLevel == 3) {
-    
-  // 50% light level
-  } else {
-    //ledcWrite(CHN, adc_value);
-    
+    targetValue =  ADC_LIGHT_MAX - (3*(ambient_light_range/4));
   }
+  int difference_target_current = light_reading - targetValue;
 
+  if (light_reading > targetValue) {
+    int dutyCycle = map(difference_target_current, 0, ambient_light_range, 0, (pow(2, PWM_BIT) - 1));
+    Serial.print("DUTY CYCLE yellow:");
+    Serial.println(dutyCycle);
+    ledcWrite(CHN, dutyCycle);
+  } else if (light_reading <= targetValue)  {
+     ledcWrite(CHN, 0);
+  }
   Serial.println("Waiting 1 second");
   delay(1000);
 }
