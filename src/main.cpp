@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <stdlib.h>
+#include <math.h>
 
 #if defined(ESP32)
 #include <WiFiMulti.h>
@@ -18,14 +20,27 @@ ESP8266WiFiMulti wifiMulti;
 #define PIN_ANALOG_IN_TEMP 32
 #define PIN_ANALOG_IN_LIGHT 34
 
+#define LED_RED 13
+#define LED_BLUE 14
+#define LED_GREEN 4
+
+#define LED_YELLOW 33
+#define CHN 1
+#define PWM_BIT 11
+#define FRQ 1000
+
+#define ADC_LIGHT_MAX 1360
+#define ADC_LIGHT_MIN 735
+
+
 // WiFi AP SSID
-#define WIFI_SSID "Lily's iPhone (2)"
+#define WIFI_SSID ""
 // WiFi password
-#define WIFI_PASSWORD "ps0vskam8kr75"
+#define WIFI_PASSWORD ""
 
 #define INFLUXDB_URL "https://us-east-1-1.aws.cloud2.influxdata.com"
-#define INFLUXDB_TOKEN "3ug-Egxdzj7ui9w2qw4W8M4NTv1dGs3yD6EIImgOELHe0IDvmWNQU9COlo9JUXyBqip__lbjkFaqXgVr_0vlTQ=="
-#define INFLUXDB_ORG "857f6e8ce39c5194"
+#define INFLUXDB_TOKEN ""
+#define INFLUXDB_ORG ""
 #define INFLUXDB_BUCKET "ESP32"
 
 // Time zone info
@@ -51,9 +66,9 @@ WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
 String clientID;
-int tempUpperThreshold;
-int tempLowerThreshold;
-int lightUpperThreshold;
+float tempUpperThreshold = 35; //could we make this a temp threshold a float?
+float tempLowerThreshold = 25;
+int lightUpperThreshold;//i dont think we need a light threshold, just a temperature threshold - NJ
 int lightLowerThreshold;
 
 void callback(char *topic, byte *payload, unsigned int length);
@@ -65,6 +80,13 @@ float get_light();
 void setup() {
   Serial.begin(115200);
   analogReadResolution(11);
+
+  //initalise LEDS as digital output
+  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_BLUE, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+  ledcSetup(CHN, FRQ, PWM_BIT);
+  ledcAttachPin(LED_YELLOW, CHN);
 
   // Setup wifi
   WiFi.mode(WIFI_STA);
@@ -141,8 +163,10 @@ void loop() {
 
   // Store measured value into point
   // Report RSSI of currently connected network
-  sensor.addField("temp", get_temp());
-  sensor.addField("light", get_light());
+  float temp_reading = get_temp();
+  float light_reading = get_light();
+  sensor.addField("temp", temp_reading);
+  sensor.addField("light", light_reading);
 
   // Print what are we exactly writing
   Serial.print("Writing: ");
@@ -159,8 +183,46 @@ void loop() {
     Serial.println(client.getLastErrorMessage());
   }
 
+  //turn on LEDS based on the temperature level
+  if(temp_reading < tempLowerThreshold)
+  { 
+
+    //turn on the blue LED if current temp < then the lower threshold
+    digitalWrite(LED_BLUE, HIGH);
+    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_RED, LOW);
+  }
+
+  else if(temp_reading > tempUpperThreshold) {
+    //turn on the red LED if current temp is higher then the lower threshold
+    digitalWrite(LED_RED, HIGH);
+    digitalWrite(LED_BLUE, LOW);
+    digitalWrite(LED_GREEN, LOW);
+  }
+  else 
+  {
+    //turn on the green led, if the temperature is within the threshold
+    digitalWrite(LED_GREEN, HIGH);
+    digitalWrite(LED_RED, LOW);
+    digitalWrite(LED_RED, LOW);
+  }
+
+  //breathing light 
+  if(light_reading <= ADC_LIGHT_MIN)
+  {
+    light_reading = ADC_LIGHT_MIN;
+  }
+  else if(light_reading >= ADC_LIGHT_MAX)
+  {
+    light_reading = ADC_LIGHT_MIN;
+  }
+
+  int adc_value = map(light_reading, ADC_LIGHT_MIN, ADC_LIGHT_MAX, 0, (pow(2, PWM_BIT) -1));
+  ledcWrite(CHN, adc_value);
+
   Serial.println("Waiting 1 second");
   delay(1000);
+ 
 }
 
 void callback(char *topic, byte *payload, unsigned int length) {
@@ -192,8 +254,8 @@ void callback(char *topic, byte *payload, unsigned int length) {
     Serial.println(light_lower_thres);
     Serial.println();
 
-    tempUpperThreshold = atoi(temp_upper_thres);
-    tempLowerThreshold = atoi(temp_lower_thres);
+    tempUpperThreshold = atof(temp_upper_thres);
+    tempLowerThreshold = atof(temp_lower_thres);
     lightUpperThreshold = atoi(light_upper_thres);
     lightLowerThreshold = atoi(light_lower_thres);
   }
