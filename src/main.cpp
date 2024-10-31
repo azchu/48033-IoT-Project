@@ -17,19 +17,19 @@ ESP8266WiFiMulti wifiMulti;
 #include <InfluxDbClient.h>
 #include <InfluxDbCloud.h>
 
-#define PIN_ANALOG_IN_TEMP 32
-#define PIN_ANALOG_IN_LIGHT 34
+#define PIN_ANALOG_IN_TEMP 32 //thermistor
+#define PIN_ANALOG_IN_LIGHT 34 //photocell
 
-#define LED_RED 13
-#define LED_BLUE 14
-#define LED_GREEN 4
+#define LED_RED 13 //too hot led
+#define LED_BLUE 14 //too cold led
+#define LED_GREEN 4 //perfect led
 
-#define LED_YELLOW 33
+#define LED_YELLOW 33 //actuator brighter when light too low
 #define CHN 1
 #define PWM_BIT 11
 #define FRQ 1000
 
-#define ADC_LIGHT_MIN 990
+#define ADC_LIGHT_MIN 990 //adc reading for the photocell
 #define ADC_LIGHT_MAX 1600
 
 
@@ -55,7 +55,7 @@ ESP8266WiFiMulti wifiMulti;
 InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
 
 // Declare Data point
-Point sensor("alicesesp32");
+Point sensor("greenhouse_esp32");
 
 const char *mqtt_broker = "broker.emqx.io";
 const char *mqtt_username = "emqx";
@@ -69,8 +69,8 @@ String clientID;
 float tempUpperThreshold = 35; //could we make this a temp threshold a float?
 float tempLowerThreshold = 30;
 int green_blinking_flag = 0;
-int lightUpperThreshold;//i dont think we need a light threshold, just a temperature threshold - NJ
-int lightLowerThreshold;
+int lightLevel = 2; //three levels 1, 2 or 3
+
 
 void callback(char *topic, byte *payload, unsigned int length);
 void reconnect();
@@ -100,7 +100,7 @@ void setup() {
   }
   Serial.println();
 
-  clientID = "kaisesp32-";
+  clientID = "greenhouse_esp32-";
   clientID += WiFi.macAddress();
   Serial.println(clientID);
 
@@ -116,7 +116,7 @@ void setup() {
       delay(2000);
     }
   }
-  mqttClient.subscribe("kaisesp32/msgIn/tempControl");
+  mqttClient.subscribe("greenhouse_esp32/msgIn/greenhouseControl");
 
   // Accurate time is necessary for certificate validation and writing in batches
   // We use the NTP servers in your area as provided by: https://www.pool.ntp.org/zone/
@@ -139,8 +139,8 @@ void setup() {
 
   // Add tags to the data point
   sensor.addTag("device", DEVICE);
-  sensor.addTag("location", "unilab");
-  sensor.addTag("esp32_CUI_13927557", String(WiFi.BSSIDstr().c_str()));
+  sensor.addTag("location", "greenhouse");
+  sensor.addTag("greenhouse_esp32", String(WiFi.BSSIDstr().c_str()));
 
 }
 void loop() {
@@ -152,15 +152,6 @@ void loop() {
 
   // Clear fields for reusing the point. Tags will remain
   sensor.clearFields();
-
-  String rssi = String(WiFi.RSSI());
-  const char *rssiTopic = "kaisesp32/wifiMeta/rssi";
-  const char *rssiPayload = rssi.c_str();
-  if (mqttClient.publish(rssiTopic, rssiPayload)) {
-    Serial.println("publish okay");
-  } else {
-    Serial.println("publish failed");
-  }
 
   // Store measured value into point
   // Report RSSI of currently connected network
@@ -178,49 +169,62 @@ void loop() {
     Serial.println("Wifi connection lost");
   }
 
-
   // Write point
   if (!client.writePoint(sensor)) {
     Serial.print("InfluxDB write failed: ");
     Serial.println(client.getLastErrorMessage());
   }
+  
   //turn on LEDS based on the temperature level
-  if(temp_reading < tempLowerThreshold)
-  { 
+  const char *warningTopic = "greenhouse_esp32/warnings";
+  if (temp_reading < tempLowerThreshold) { 
     //turn on the blue LED if current temp < then the lower threshold
+    const char *lowerPayload = "Warning! The temperature is less than the set threshold";
+    if (mqttClient.publish(warningTopic, lowerPayload)) {
+      Serial.println("lower warning publish okay");
+    } else {
+      Serial.println("lower warning publish failed");
+    }
     digitalWrite(LED_BLUE, HIGH);
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(LED_RED, LOW);
     green_blinking_flag = 0;
-  }
-  else if(temp_reading > tempUpperThreshold) {
+    
+  } else if (temp_reading > tempUpperThreshold) {
     //turn on the red LED if current temp is higher then the lower threshold
+    const char *higherPayload = "Warning! The temperature exceeds the set threshold";
+    if (mqttClient.publish(warningTopic, higherPayload)) {
+      Serial.println("higher warning publish okay");
+    } else {
+      Serial.println("higher warning publish failed");
+    }
     digitalWrite(LED_RED, HIGH);
     digitalWrite(LED_BLUE, LOW);
     digitalWrite(LED_GREEN, LOW);
     green_blinking_flag = 0;
-  }
-
-  //we want the green LED to blink within two celsius of the temp threshold
-  else if((temp_reading - tempLowerThreshold) <= 2.0 || (tempUpperThreshold - temp_reading) <= 2.0)
-  {
+    
+    
+    //we want the green LED to blink within two celsius of the temp threshold
+  } else if ((temp_reading - tempLowerThreshold) <= 1.0 || (tempUpperThreshold - temp_reading) <= 1.0) {
+    //char* thresholdType = ((temp_reading - tempLowerThreshold) <= 2.0) ? "minimum threshold" : "maximum threshold";
+    const char *warningPayload = "Warning! The temperature is approaching the set threshold ";
+    if (mqttClient.publish(warningTopic, warningPayload)) {
+      Serial.println("warning publish okay");
+    } else {
+      Serial.println("warning publish failed");
+    }
     digitalWrite(LED_RED, LOW);
     digitalWrite(LED_BLUE, LOW);
 
     //if green led is already 1, turn the led off
-    if(green_blinking_flag == 1)
-    {
+    if (green_blinking_flag == 1) {
       digitalWrite(LED_GREEN, LOW);
       green_blinking_flag=0;
-
-    } else 
-    {
+    } else {
       digitalWrite(LED_GREEN, HIGH);
       green_blinking_flag=1;
     }
-  }
-  else 
-  {
+  } else {
     //turn on the green led, if the temperature is within the threshold
     digitalWrite(LED_GREEN, HIGH);
     green_blinking_flag = 1;
@@ -228,22 +232,33 @@ void loop() {
     digitalWrite(LED_BLUE, LOW);
   }
 
-  //breathing light 
-  if(light_reading <= ADC_LIGHT_MIN)
-  {
+  if (light_reading <= ADC_LIGHT_MIN) {
     light_reading = ADC_LIGHT_MIN;
-  }
-  else if(light_reading >= ADC_LIGHT_MAX)
-  {
+  } else if (light_reading >= ADC_LIGHT_MAX) {
     light_reading = ADC_LIGHT_MAX;
   }
-
+  
+  // Uses the light reading from the photo_cell to control the brightness of the yellow LED
   int adc_value = map(light_reading, ADC_LIGHT_MIN, ADC_LIGHT_MAX, 0, (pow(2, PWM_BIT) -1));
-  ledcWrite(CHN, adc_value);
+  //25% light level
+  if (lightLevel == 1) {
+    // user input: 1, 2, 3 
+    // low temperature, high temperature
+    // 3 light modes which indicate the light target
+    // If the light level is 1 (the user want low ambient), we want the photocell's threshold to be a low value
+    // If Light level 3 (high), the user wants a lot of light, if the threshold is not met, turn up brightness of yellow LED
+    // Sets the threshold for the 
+  // 100% light level
+  } else if (lightLevel == 3) {
+    
+  // 50% light level
+  } else {
+    //ledcWrite(CHN, adc_value);
+    
+  }
 
   Serial.println("Waiting 1 second");
   delay(1000);
- 
 }
 
 void callback(char *topic, byte *payload, unsigned int length) {
@@ -266,19 +281,16 @@ void callback(char *topic, byte *payload, unsigned int length) {
   if (!error) {
     const char *temp_upper_thres = doc["temp_upper_thres"];
     const char *temp_lower_thres = doc["temp_lower_thres"];
-    const char *light_upper_thres = doc["light_upper_thres"];
-    const char *light_lower_thres = doc["light_lower_thres"];
+    const char *light_level = doc["light_level"];
 
     Serial.println(temp_upper_thres);
     Serial.println(temp_lower_thres);
-    Serial.println(light_upper_thres);
-    Serial.println(light_lower_thres);
+    Serial.println(light_level);
     Serial.println();
 
     tempUpperThreshold = atof(temp_upper_thres);
     tempLowerThreshold = atof(temp_lower_thres);
-    lightUpperThreshold = atoi(light_upper_thres);
-    lightLowerThreshold = atoi(light_lower_thres);
+    lightLevel = atoi(light_level);
   }
 }
 
@@ -287,7 +299,7 @@ void reconnect() {
     Serial.print("Attempting MQTT connection...");
     if (mqttClient.connect(clientID.c_str())) {
       Serial.println("connected");
-      mqttClient.subscribe("kaisesp32/msgIn/tempControl");
+      mqttClient.subscribe("greenhouse_esp32/msgIn/greenhouseControl");
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
