@@ -29,8 +29,8 @@ ESP8266WiFiMulti wifiMulti;
 #define PWM_BIT 11
 #define FRQ 1000
 
-#define ADC_LIGHT_MAX 1360
-#define ADC_LIGHT_MIN 735
+#define ADC_LIGHT_MIN 990
+#define ADC_LIGHT_MAX 1600
 
 
 // WiFi AP SSID
@@ -67,7 +67,8 @@ PubSubClient mqttClient(espClient);
 
 String clientID;
 float tempUpperThreshold = 35; //could we make this a temp threshold a float?
-float tempLowerThreshold = 25;
+float tempLowerThreshold = 30;
+int green_blinking_flag = 0;
 int lightUpperThreshold;//i dont think we need a light threshold, just a temperature threshold - NJ
 int lightLowerThreshold;
 
@@ -177,34 +178,54 @@ void loop() {
     Serial.println("Wifi connection lost");
   }
 
+
   // Write point
   if (!client.writePoint(sensor)) {
     Serial.print("InfluxDB write failed: ");
     Serial.println(client.getLastErrorMessage());
   }
-
   //turn on LEDS based on the temperature level
   if(temp_reading < tempLowerThreshold)
   { 
-
     //turn on the blue LED if current temp < then the lower threshold
     digitalWrite(LED_BLUE, HIGH);
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(LED_RED, LOW);
+    green_blinking_flag = 0;
   }
-
   else if(temp_reading > tempUpperThreshold) {
     //turn on the red LED if current temp is higher then the lower threshold
     digitalWrite(LED_RED, HIGH);
     digitalWrite(LED_BLUE, LOW);
     digitalWrite(LED_GREEN, LOW);
+    green_blinking_flag = 0;
+  }
+
+  //we want the green LED to blink within two celsius of the temp threshold
+  else if((temp_reading - tempLowerThreshold) <= 2.0 || (tempUpperThreshold - temp_reading) <= 2.0)
+  {
+    digitalWrite(LED_RED, LOW);
+    digitalWrite(LED_BLUE, LOW);
+
+    //if green led is already 1, turn the led off
+    if(green_blinking_flag == 1)
+    {
+      digitalWrite(LED_GREEN, LOW);
+      green_blinking_flag=0;
+
+    } else 
+    {
+      digitalWrite(LED_GREEN, HIGH);
+      green_blinking_flag=1;
+    }
   }
   else 
   {
     //turn on the green led, if the temperature is within the threshold
     digitalWrite(LED_GREEN, HIGH);
+    green_blinking_flag = 1;
     digitalWrite(LED_RED, LOW);
-    digitalWrite(LED_RED, LOW);
+    digitalWrite(LED_BLUE, LOW);
   }
 
   //breathing light 
@@ -214,7 +235,7 @@ void loop() {
   }
   else if(light_reading >= ADC_LIGHT_MAX)
   {
-    light_reading = ADC_LIGHT_MIN;
+    light_reading = ADC_LIGHT_MAX;
   }
 
   int adc_value = map(light_reading, ADC_LIGHT_MIN, ADC_LIGHT_MAX, 0, (pow(2, PWM_BIT) -1));
