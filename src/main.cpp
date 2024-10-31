@@ -29,17 +29,17 @@ ESP8266WiFiMulti wifiMulti;
 #define PWM_BIT 11
 #define FRQ 1000
 
-#define ADC_LIGHT_MIN 1171 //adc reading for the photocell // when the ambient light is maximum
-#define ADC_LIGHT_MAX 1832 //when ambient light is minimum (dark room)
+#define ADC_LIGHT_MIN 1000 //adc reading for the photocell // when the ambient light is maximum
+#define ADC_LIGHT_MAX 1960 //when ambient light is minimum (dark room)
 
 // WiFi AP SSID
-#define WIFI_SSID "earthnet-gg"
+#define WIFI_SSID "noot"
 // WiFi password
-#define WIFI_PASSWORD "niyumi08"
+#define WIFI_PASSWORD "ChuChuyoo"
 
 #define INFLUXDB_URL "https://us-east-1-1.aws.cloud2.influxdata.com"
-#define INFLUXDB_TOKEN "UcQ5M0StjbbfJsFdA84k39_rdL76dj25y-cQsyJ5AFljFKuSgNWcID9MUYLxVHgR9xftGWd6ZBjfomyBr5A3lA=="
-#define INFLUXDB_ORG "3bd794dacd2ad103"
+#define INFLUXDB_TOKEN "3ug-Egxdzj7ui9w2qw4W8M4NTv1dGs3yD6EIImgOELHe0IDvmWNQU9COlo9JUXyBqip__lbjkFaqXgVr_0vlTQ=="
+#define INFLUXDB_ORG "857f6e8ce39c5194"
 #define INFLUXDB_BUCKET "ESP32"
 
 // Time zone info
@@ -69,7 +69,6 @@ float tempUpperThreshold = 35; //could we make this a temp threshold a float?
 float tempLowerThreshold = 30;
 int green_blinking_flag = 0;
 int lightLevel = 2; //three levels 1, 2 or 3
-
 
 void callback(char *topic, byte *payload, unsigned int length);
 void reconnect();
@@ -157,7 +156,8 @@ void loop() {
   float temp_reading = get_temp();
   float light_reading = get_light();
   sensor.addField("temp", temp_reading);
-  sensor.addField("light", light_reading);
+  int invertedLightValue = (pow(2, PWM_BIT) - 1) - light_reading;
+  sensor.addField("light", float(invertedLightValue));
 
   // Print what are we exactly writing
   Serial.print("Writing: ");
@@ -322,7 +322,7 @@ void reconnect() {
 
 float get_temp() {
   int adcValue = analogRead(PIN_ANALOG_IN_TEMP);
-  double voltage = (float)adcValue / 2047.0 * 3.3;
+  double voltage = (float)adcValue / (pow(2, PWM_BIT) - 1) * 3.3;
   double Rt = 10 * voltage / (3.3 - voltage);
   double tempK = 1 / (1 / (273.15 + 25) + log(Rt / 10) /3950.0);
   double tempC = tempK - 273.15;
